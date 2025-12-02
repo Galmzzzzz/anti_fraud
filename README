@@ -1,0 +1,9 @@
+git clone <репозиторий>
+python -m venv venv         # создаём виртуальное окружение
+source venv/bin/activate    # Linux/macOS
+venv\Scripts\activate       # Windows
+pip install -r requirements.txt
+
+
+DATABASE_URL=URL
+JWT_SECRET_KEY=JWT_SECRET_KEY

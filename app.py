@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Request, Response
+from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
 from typing import Annotated
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import (
@@ -16,16 +16,25 @@ import joblib
 import pandas as pd
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from datetime import datetime
+from sqlalchemy.exc import SQLAlchemyError
 
+from fastapi import FastAPI, Depends, Request, Response, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import UsersModel, UserDevicesModel
+from models import TransactionsModel, FraudReportsModel
+from schemas import Register, Login
+from schemas import Transaction
+from fraud_check import check_fraud
+from config import settings
 
 app = FastAPI()
 
 config = AuthXConfig()
-config.JWT_ACCESS_COOKIE_NAME = "my_acces_token"
+config.JWT_ACCESS_COOKIE_NAME = settings.jwt_access_cookie_name
 config.JWT_TOKEN_LOCATION = ["cookies"]
-config.JWT_SECRET_KEY = "qwerqwer12341234"
-config.JWT_COOKIE_CSRF_PROTECT = False
-# вынести секретный ключ в .env 
+config.JWT_SECRET_KEY = settings.jwt_secret_key
+config.JWT_COOKIE_CSRF_PROTECT = settings.jwt_cookie_csrf_protect
+
 
 security = AuthX(config=config)
 
@@ -46,110 +55,6 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 class Base(DeclarativeBase):
     pass
 
-class UsersModel(Base):
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)  # BIGSERIAL
-    phone_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    password: Mapped[str] = mapped_column(String(128), nullable=False)
-    ip: Mapped[str] = mapped_column(String(45), nullable=False)
-    country: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
-
-
-class UserDevicesModel(Base):
-    __tablename__ = "user_devices"
-
-    device_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)  # BIGSERIAL
-    device: Mapped[str] = mapped_column(String(65), nullable=False)
-    user_ip: Mapped[str] = mapped_column(String(45), nullable=False)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    screen_width: Mapped[int] = mapped_column(BigInteger)
-    screen_height: Mapped[int] = mapped_column(BigInteger)
-
-class TransactionsModel(Base):
-    __tablename__ = "transactions"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)  # BIGSERIAL
-    sender_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    receiver_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    sum: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), default="pending")
-    is_fraud: Mapped[bool] = mapped_column(Boolean, default=False)
-    device_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user_devices.device_id", ondelete="SET NULL"))
-    user_ip: Mapped[str] = mapped_column(String(45))
-
-class FraudReportsModel(Base):
-    __tablename__ = "fraud_reports"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)  # BIGSERIAL
-    transaction_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    detected_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    reason: Mapped[str] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(32), default="open")
-
-class Register(BaseModel):
-    phone_number: int
-    password: str
-    
-
-class Login(BaseModel):
-    
-    phone_number: int
-    password: str
-    device: str
-    screen_width: int
-    screen_height: int
-
-class Transaction(BaseModel):
-    receiver: int
-    sum: int
-
-
-async def check_fraud(sender: UsersModel,sum: int, device_id: int, real_ip: str, session: AsyncSession) -> bool:
-    
-    country = sender.country
-    amount = float(sum)
-
-    # Проверяем устройство
-    device_query = select(UserDevicesModel).where(
-        UserDevicesModel.user_id == sender.id,
-        UserDevicesModel.device_id == device_id
-    )
-    result = await session.execute(device_query)
-    device = result.scalar_one_or_none()
-
-    if device is None:
-        device_new = 1
-        ip_changed = 1  # если device не найден — считаем как новое устройство + смена IP
-    else:
-        device_new = 0
-        # Сравниваем текущий IP с последним IP для этого девайса
-        ip_changed = 1 if device.user_ip != real_ip else 0
-
-    # Время транзакции
-    hour = datetime.utcnow().hour
-
-    # Формируем DataFrame для модели
-    df = pd.DataFrame([{
-        "amount": amount,
-        "country": country,
-        "device_new": device_new,
-        "ip_changed": ip_changed,
-        "hour": hour
-    }])
-
-    # one-hot для страны
-    df = pd.get_dummies(df, columns=["country"])
-    for col in model.feature_names_in_:
-        if col not in df.columns:
-            df[col] = 0
-    df = df[model.feature_names_in_]
-
-    proba = model.predict_proba(df)[0][1]
-    return proba > 0.7
-
 
 @app.post("/register")
 async def register(credential: Register, request: Request, session: AsyncSession = Depends(get_session)):
@@ -169,7 +74,6 @@ async def register(credential: Register, request: Request, session: AsyncSession
     session.add(user)
     await session.commit()
     return {"status" : "success",}
-
 
     
 @app.post("/login")
@@ -234,9 +138,6 @@ async def login(
         "access_token": token,
         "device_id" : device_id
         }
-
-
-model = joblib.load("fraud_model.pkl")
 
 
 @app.post("/transaction", dependencies=[Depends(security.access_token_required)])
@@ -318,6 +219,117 @@ async def transaction(
     return {"status": "success"}
 
 
+@app.get("/me", dependencies=[Depends(security.access_token_required)])
+async def get_me(
+    request: Request,
+    session: AsyncSession = Depends(get_session)
+):
+    token = request.cookies.get(config.JWT_ACCESS_COOKIE_NAME)
+    payload = security._decode_token(token)
+    user_id = int(payload.sub)
 
-# uvicorn anti_fraud:app --reload
-# venv\Scripts\Activate.ps1
+    user = await session.get(UsersModel, user_id)
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    devices_query = select(UserDevicesModel).where(UserDevicesModel.user_id == user_id)
+    result = await session.execute(devices_query)
+
+    devices = result.scalars().all()
+
+    return {
+        "id": user.id,
+        "phone_number": user.phone_number,
+        "balance": user.balance,
+        "country": user.country,
+        "ip": user.ip,
+        "devices": [
+            {
+                "device_id": d.device_id,
+                "device": d.device,
+                "user_ip": d.user_ip,
+                "screen_width": d.screen_width,
+                "screen_height": d.screen_height,
+            }
+            for d in devices
+        ],
+    }
+
+
+@app.get("/get_transactions", dependencies=[Depends(security.access_token_required)])
+async def get_transactions(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(50, gt=0, le=100),
+    offset: int = Query(0, ge=0),
+):
+    token = request.cookies.get(config.JWT_ACCESS_COOKIE_NAME)
+    payload = security._decode_token(token)
+    user_id = int(payload.sub)
+
+    query = (
+        select(TransactionsModel)
+        .where(
+            (TransactionsModel.sender_id == user_id)
+            | (TransactionsModel.receiver_id == user_id)
+        )
+        .order_by(TransactionsModel.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    result = await session.execute(query)
+    txs = result.scalars().all()
+
+    return [
+        {
+            "id": tx.id,
+            "sender_id": tx.sender_id,
+            "receiver_id": tx.receiver_id,
+            "sum": tx.sum,
+            "status": tx.status,
+            "is_fraud": tx.is_fraud,
+            "device_id": tx.device_id,
+            "user_ip": tx.user_ip,
+            "direction": "sent" if tx.sender_id == user_id else "received",
+        }
+        for tx in txs
+    ]
+
+
+@app.get("/total_sent")
+async def total_sent(session: AsyncSession = Depends(get_session)):
+    query = (
+        select(
+            UsersModel.phone_number,
+            func.sum(TransactionsModel.sum).label("total_sent"),
+        )
+        .join(TransactionsModel, TransactionsModel.sender_id == UsersModel.id)
+        .group_by(UsersModel.id)
+    )
+
+    result = await session.execute(query)
+    rows = result.all()
+
+    return [
+        {"phone_number": phone, "total_sent": total or 0}
+        for phone, total in rows
+    ]
+
+
+@app.delete("/fraud_reports", dependencies=[Depends(security.access_token_required)])
+async def delete_fraud_reports(session: AsyncSession = Depends(get_session)):
+    try:
+        query = text("DELETE FROM fraud_reports")
+        await session.execute(query)
+        await session.commit()
+
+        return {"status": "success", "message": "All fraud reports deleted."}
+
+    except SQLAlchemyError as e:
+        await session.rollback()
+        return {
+            "status": "error",
+            "message": f"Failed to delete fraud reports: {str(e)}",
+        }
