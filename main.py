@@ -1,21 +1,17 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
 from typing import Annotated
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
     AsyncSession,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import BigInteger, String, Boolean, DateTime, func, ForeignKey, text, select
-from datetime import datetime
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import func, text, select
+
 from authx import AuthX, AuthXConfig
 # import geocoder
 import random
-import joblib
-import pandas as pd
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
-from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError
 
 from fastapi import FastAPI, Depends, Request, Response, Query
@@ -26,8 +22,23 @@ from schemas import Register, Login
 from schemas import Transaction
 from fraud_check import check_fraud
 from config import settings
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0")
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", ],
+    allow_credentials=True,  
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 config = AuthXConfig()
 config.JWT_ACCESS_COOKIE_NAME = settings.jwt_access_cookie_name
@@ -38,7 +49,7 @@ config.JWT_COOKIE_CSRF_PROTECT = settings.jwt_cookie_csrf_protect
 
 security = AuthX(config=config)
 
-DATABASE_URL = "postgresql+asyncpg://postgres:gala@localhost:5432/Anti_fraud"
+DATABASE_URL = "postgresql+asyncpg://gala:gala@pg:5432/anti_fraud"
 
 engine = create_async_engine(DATABASE_URL)
 
@@ -131,8 +142,17 @@ async def login(
 
         device_id = existing_device.device_id
     
-    response.set_cookie(config.JWT_ACCESS_COOKIE_NAME, token)
-    response.set_cookie("device_id", device_id)
+        
+
+    response.set_cookie(
+        key=config.JWT_ACCESS_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=False,         
+        samesite="Lax",
+        max_age=3600,
+    )
+    response.set_cookie("device_id", device_id, httponly=True, secure=False)
     # Add CSRF AND HTTPONLY 
     return {
         "access_token": token,
