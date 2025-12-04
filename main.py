@@ -25,7 +25,7 @@ from config import settings
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from authx.exceptions import JWTDecodeError
-
+from security import hash_password
 
 app = FastAPI()
 
@@ -72,10 +72,11 @@ async def register(credential: Register, request: Request, session: AsyncSession
     # country = g.country
     countries = ["KZ", "RU", "US", "GB", "CN"]
     country = random.choice(countries)
+    hashed_password = hash_password(credential.password)
     user = UsersModel(
         phone_number=credential.phone_number,
         balance=1000,
-        password=credential.password,
+        password=hashed_password,
         ip=real_ip,  
         country=country
     )
@@ -89,6 +90,8 @@ from sqlalchemy.orm import load_only
 
 from sqlalchemy.orm import load_only
 
+from security import verify_password
+
 @app.post("/login")
 async def login(
     credential: Login,
@@ -97,31 +100,32 @@ async def login(
     session: AsyncSession = Depends(get_session)
 ):
     async with session.begin():
-        # Загружаем только поле password сразу
-        query = select(UsersModel).options(load_only(UsersModel.password)).where(
+        query = select(UsersModel).options(load_only(UsersModel.password, UsersModel.id)).where(
             UsersModel.phone_number == credential.phone_number
         )
+
         result = await session.execute(query)
         user = result.scalar_one_or_none()
 
-        if user is None:
+        if not user:
             raise HTTPException(status_code=401, detail="incorrect username or password")
 
-        if credential.password != user.password:
+        if not verify_password(user.password, credential.password):
             raise HTTPException(status_code=401, detail="incorrect username or password")
 
         token = security.create_access_token(uid=str(user.id))
+
         real_ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
 
-        # Проверяем устройство
         device_query = select(UserDevicesModel).where(
             UserDevicesModel.device == credential.device,
             UserDevicesModel.user_id == user.id
         )
+
         device_result = await session.execute(device_query)
         existing_device = device_result.scalar_one_or_none()
 
-        if existing_device is None:
+        if not existing_device:
             new_device = UserDevicesModel(
                 device=credential.device,
                 user_ip=real_ip,
@@ -130,7 +134,7 @@ async def login(
                 screen_height=credential.screen_height
             )
             session.add(new_device)
-            await session.flush()  # flush, чтобы получить device_id
+            await session.flush()
             await session.refresh(new_device)
             device_id = new_device.device_id
         else:
@@ -139,22 +143,27 @@ async def login(
             await session.flush()
             device_id = existing_device.device_id
 
-    # После выхода из async with session.begin() commit уже сделан
-    # Можно безопасно устанавливать куки
     response.set_cookie(
         key=config.JWT_ACCESS_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,
+        secure=False,   # в проде  True
         samesite="Lax",
         max_age=3600,
     )
-    response.set_cookie("device_id", str(device_id), httponly=True, secure=False)
+
+    response.set_cookie(
+        "device_id",
+        str(device_id),
+        httponly=True,
+        secure=False     # В проде True
+    )
 
     return {
         "access_token": token,
         "device_id": device_id
     }
+
 
 
 
