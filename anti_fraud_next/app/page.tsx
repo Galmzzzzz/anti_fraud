@@ -17,7 +17,7 @@ export default function Home() {
     const fetchUser = async () => {
       try {
         const response = await axios.get('http://localhost:8000/me', {
-          withCredentials: true, // важно для cookie
+          withCredentials: true,
         })
         setBalance(response.data.balance)
       } catch (err) {
@@ -76,7 +76,8 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
-      <header className="flex justify-between items-center px-6 py-5 bg-white shadow">
+      {/* Хедер растянут на всю ширину */}
+      <header className="w-full flex justify-between items-center px-6 py-5 bg-white shadow">
         <h1 className="text-2xl font-bold">Главная</h1>
         <div className="flex items-center gap-4">
           <span className="font-semibold">Баланс: ${balance ?? '...'}</span>
@@ -88,7 +89,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="p-6 max-w-md mx-auto">
+      <main className="p-6 w-full max-w-lg mx-auto">
         <h2 className="text-xl font-bold mb-4">Сделать перевод</h2>
         {error && <div className="mb-2 p-2 bg-red-100 text-red-700 rounded">{error}</div>}
         {success && <div className="mb-2 p-2 bg-green-100 text-green-700 rounded">{success}</div>}

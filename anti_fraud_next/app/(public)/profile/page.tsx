@@ -1,23 +1,117 @@
-import Link from 'next/link'
+'use client'
 
-export default function Profile() {
-  const user = { name: 'Галымжан', phone: '+7700xxxxxxx', balance: 1200 }
+import { useEffect, useState } from 'react'
+import axios from 'axios'
+
+interface Transaction {
+  id: number
+  sender_id: number
+  receiver_id: number
+  sum: number
+  status: string
+  is_fraud: boolean
+  device_id: number
+  user_ip: string
+  direction: 'sent' | 'received'
+}
+
+interface Device {
+  device_id: number
+  device: string
+  user_ip: string
+  screen_width: number
+  screen_height: number
+}
+
+interface User {
+  id: number
+  phone_number: string
+  balance: number
+  country: string
+  ip: string
+  devices: Device[]
+}
+
+export default function ProfilePage() {
+  const [user, setUser] = useState<User | null>(null)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [userRes, transactionsRes] = await Promise.all([
+          axios.get('http://localhost:8000/me', { withCredentials: true }),
+          axios.get('http://localhost:8000/get_transactions', { withCredentials: true }),
+        ])
+        setUser(userRes.data)
+        setTransactions(transactionsRes.data)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+    fetchData()
+  }, [])
 
   return (
-    <div className="min-h-screen bg-gray-100 font-sans">
-      <header className="flex justify-between items-center px-6 py-5 bg-white shadow">
-        <h1 className="text-2xl font-bold">Профиль</h1>
-        <Link href="/" className="text-blue-600 hover:underline">
-          Главная
-        </Link>
+    <div className="min-h-screen w-full bg-gray-50 text-gray-900 font-sans">
+      {/* Хедер */}
+      <header className="w-full bg-white shadow p-6 flex justify-between items-center">
+        <h1 className="text-3xl font-bold text-blue-700">Профиль</h1>
+        <div className="text-right">
+          {user && (
+            <>
+              <div className="font-semibold text-lg">Баланс: ${user.balance}</div>
+              <div className="text-sm text-gray-600">Тел: {user.phone_number}</div>
+            </>
+          )}
+        </div>
       </header>
 
-      <main className="flex justify-center p-6">
-        <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-lg space-y-3">
-          <h2 className="text-2xl font-bold text-gray-900">{user.name}</h2>
-          <p className="text-gray-700">Телефон: {user.phone}</p>
-          <p className="text-gray-900 font-semibold">Баланс: ${user.balance}</p>
-        </div>
+      <main className="w-full p-6 flex flex-col items-center">
+        {user && (
+          <section className="w-full max-w-4xl bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-bold mb-4 text-blue-700">Данные пользователя</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p><span className="font-semibold">ID:</span> {user.id}</p>
+                <p><span className="font-semibold">Страна:</span> {user.country}</p>
+                <p><span className="font-semibold">IP:</span> {user.ip}</p>
+              </div>
+              <div>
+                <p className="font-semibold mb-1">Устройства:</p>
+                <ul className="list-disc pl-5">
+                  {user.devices.map(device => (
+                    <li key={device.device_id}>
+                      {device.device} ({device.screen_width}x{device.screen_height})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section className="w-full max-w-4xl bg-white rounded-lg shadow p-6">
+          <h2 className="text-xl font-bold mb-4 text-blue-700">История переводов</h2>
+          <div className="space-y-3">
+            {transactions.map(tx => (
+              <div
+                key={tx.id}
+                className={`p-4 rounded shadow flex justify-between items-center ${
+                  tx.direction === 'sent' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                }`}
+              >
+                <div>
+                  <p><span className="font-semibold">ID:</span> {tx.id}</p>
+                  <p><span className="font-semibold">Сумма:</span> ${tx.sum}</p>
+                  <p><span className="font-semibold">Статус:</span> {tx.status}</p>
+                  <p><span className="font-semibold">IP:</span> {tx.user_ip}</p>
+                </div>
+                <div className="font-bold text-lg">{tx.direction === 'sent' ? 'Отправлено' : 'Получено'}</div>
+              </div>
+            ))}
+          </div>
+        </section>
       </main>
     </div>
   )

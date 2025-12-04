@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import func, text, select
-
+from fastapi.responses import JSONResponse
 from authx import AuthX, AuthXConfig
 # import geocoder
 import random
@@ -24,10 +24,8 @@ from fraud_check import check_fraud
 from config import settings
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from authx.exceptions import JWTDecodeError
 
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0")
 
 app = FastAPI()
 
@@ -87,6 +85,10 @@ async def register(credential: Register, request: Request, session: AsyncSession
     return {"status" : "success",}
 
     
+from sqlalchemy.orm import load_only
+
+from sqlalchemy.orm import load_only
+
 @app.post("/login")
 async def login(
     credential: Login,
@@ -94,70 +96,66 @@ async def login(
     request: Request,
     session: AsyncSession = Depends(get_session)
 ):
-    
-    query = select(UsersModel).where(UsersModel.phone_number == credential.phone_number)
-    result = await session.execute(query)
-    user = result.scalar_one_or_none()
-
-    if user is None:
-        raise HTTPException(status_code=401, detail="incorrect username or password")
-
-    if credential.password != user.password:
-        raise HTTPException(status_code=401, detail="incorrect username or password")
-
-
-    
-    token = security.create_access_token(uid=str(user.id))
-
-    
-    real_ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
-
-    
-    device_query = select(UserDevicesModel).where(
-        UserDevicesModel.device == credential.device,
-        UserDevicesModel.user_id == user.id
-    )
-
-    device_result = await session.execute(device_query)
-    existing_device = device_result.scalar_one_or_none()
-
-    
-    if existing_device is None:
-        new_device = UserDevicesModel(
-            device=credential.device,
-            user_ip=real_ip,
-            user_id=user.id,
-            screen_width=credential.screen_width,
-            screen_height=credential.screen_height
+    async with session.begin():
+        # Загружаем только поле password сразу
+        query = select(UsersModel).options(load_only(UsersModel.password)).where(
+            UsersModel.phone_number == credential.phone_number
         )
-        session.add(new_device)
-        await session.commit()
-        await session.refresh(new_device) 
-        device_id = new_device.device_id
+        result = await session.execute(query)
+        user = result.scalar_one_or_none()
 
-    else:
-        existing_device.user_ip = real_ip
-        session.add(existing_device)
-        await session.commit()
+        if user is None:
+            raise HTTPException(status_code=401, detail="incorrect username or password")
 
-        device_id = existing_device.device_id
-    
-        
+        if credential.password != user.password:
+            raise HTTPException(status_code=401, detail="incorrect username or password")
 
+        token = security.create_access_token(uid=str(user.id))
+        real_ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
+
+        # Проверяем устройство
+        device_query = select(UserDevicesModel).where(
+            UserDevicesModel.device == credential.device,
+            UserDevicesModel.user_id == user.id
+        )
+        device_result = await session.execute(device_query)
+        existing_device = device_result.scalar_one_or_none()
+
+        if existing_device is None:
+            new_device = UserDevicesModel(
+                device=credential.device,
+                user_ip=real_ip,
+                user_id=user.id,
+                screen_width=credential.screen_width,
+                screen_height=credential.screen_height
+            )
+            session.add(new_device)
+            await session.flush()  # flush, чтобы получить device_id
+            await session.refresh(new_device)
+            device_id = new_device.device_id
+        else:
+            existing_device.user_ip = real_ip
+            session.add(existing_device)
+            await session.flush()
+            device_id = existing_device.device_id
+
+    # После выхода из async with session.begin() commit уже сделан
+    # Можно безопасно устанавливать куки
     response.set_cookie(
         key=config.JWT_ACCESS_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,         
+        secure=False,
         samesite="Lax",
         max_age=3600,
     )
-    response.set_cookie("device_id", device_id, httponly=True, secure=False)
-    # Add CSRF AND HTTPONLY 
+    response.set_cookie("device_id", str(device_id), httponly=True, secure=False)
+
     return {
         "access_token": token,
-        "device_id" : device_id
-        }
+        "device_id": device_id
+    }
+
 
 
 @app.post("/transaction", dependencies=[Depends(security.access_token_required)])
@@ -166,32 +164,47 @@ async def transaction(
     request: Request,
     session: AsyncSession = Depends(get_session)
 ):
-    
-    token = request.cookies.get(config.JWT_ACCESS_COOKIE_NAME)
-    payload = security._decode_token(token)
-    sender_id = int(payload.sub)
+    response = JSONResponse(content={})
 
-    
+    token = request.cookies.get(settings.jwt_access_cookie_name)
+    if not token:
+        return JSONResponse(status_code=401, content={"detail": "Token missing"})
+
+    try:
+        payload = security._decode_token(token)
+        sender_id = int(payload.sub)
+    except JWTDecodeError:
+        response = JSONResponse(
+            status_code=401,
+            content={"detail": "Token expired or invalid"}
+        )
+        response.delete_cookie(key=settings.jwt_access_cookie_name)
+        response.delete_cookie(key="device_id")
+        return response
+
     device_id = request.cookies.get("device_id")
-    if device_id is None:
+    if not device_id:
         raise HTTPException(status_code=400, detail="device_id cookie missing")
     device_id = int(device_id)
-
-    
     real_ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
 
-    
+
     sender = await session.get(UsersModel, sender_id, with_for_update=True)
+    if not sender:
+        raise HTTPException(status_code=404, detail="Sender not found")
+
+
     query = select(UsersModel).where(UsersModel.phone_number == data.receiver)
     result = await session.execute(query)
     receiver = result.scalar_one_or_none()
-    if receiver is None:
+
+
+    if not receiver:
         raise HTTPException(status_code=404, detail="Receiver not found")
+
     receiver_data = await session.get(UsersModel, receiver.id, with_for_update=True)
 
-    
     is_fraud = await check_fraud(sender, data.sum, device_id, real_ip, session)
-
     if is_fraud:
         tx = TransactionsModel(
             sender_id=sender.id,
@@ -205,7 +218,6 @@ async def transaction(
         session.add(tx)
         await session.flush()
 
-        
         fraud_report = FraudReportsModel(
             transaction_id=tx.id,
             user_id=sender.id,
@@ -217,11 +229,9 @@ async def transaction(
 
         return {"status": "blocked", "reason": "fraud_detected"}
 
-    
     if sender.balance < data.sum:
         raise HTTPException(status_code=400, detail="Insufficient balance")
 
-    
     sender.balance -= data.sum
     receiver_data.balance += data.sum
     tx = TransactionsModel(
@@ -237,7 +247,6 @@ async def transaction(
     await session.commit()
 
     return {"status": "success"}
-
 
 @app.get("/me", dependencies=[Depends(security.access_token_required)])
 async def get_me(
