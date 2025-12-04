@@ -138,7 +138,7 @@ async def login(
     else:
         existing_device.user_ip = real_ip
         session.add(existing_device)
-        session.commit()
+        await session.commit()
 
         device_id = existing_device.device_id
     
