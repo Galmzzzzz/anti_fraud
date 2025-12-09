@@ -62,10 +62,15 @@ export default function Home() {
         },
         { withCredentials: true }
       )
-      setSuccess('Перевод выполнен успешно!')
-      setReceiver('8')
-      setAmount('')
-      setBalance(prev => (prev !== null ? prev - Number(amount) : null))
+
+      if (response.data.status === 'blocked') {
+        setError('Перевод отклонён (fraud)')
+      } else {
+        setSuccess('Перевод выполнен успешно!')
+        setReceiver('8')
+        setAmount('')
+        setBalance(prev => (prev !== null ? prev - Number(amount) : null))
+      }
     } catch (err: any) {
       console.error(err)
       setError(err?.response?.data?.detail || 'Ошибка перевода')
@@ -77,7 +82,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
       {/* Хедер растянут на всю ширину */}
-      <header className="w-full flex justify-between items-center px-6 py-5 bg-white shadow">
+      <header className="w-full flex justify-between items-center px-8 py-5 bg-white shadow">
         <h1 className="text-2xl font-bold">Главная</h1>
         <div className="flex items-center gap-4">
           <span className="font-semibold">Баланс: ${balance ?? '...'}</span>
@@ -89,30 +94,39 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="p-6 w-full max-w-lg mx-auto">
-        <h2 className="text-xl font-bold mb-4">Сделать перевод</h2>
-        {error && <div className="mb-2 p-2 bg-red-100 text-red-700 rounded">{error}</div>}
-        {success && <div className="mb-2 p-2 bg-green-100 text-green-700 rounded">{success}</div>}
+      <main className="p-8 w-full max-w-xl mx-auto">
+        <h2 className="text-2xl font-bold mb-6">Сделать перевод</h2>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-100 text-red-700 rounded border border-red-200">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="mb-4 p-3 bg-green-100 text-green-700 rounded border border-green-200">
+            {success}
+          </div>
+        )}
 
         <input
           type="tel"
           value={receiver}
           onChange={handlePhoneChange}
           placeholder="Номер получателя 8XXXXXXXXXX"
-          className="w-full mb-3 p-2 border border-gray-400 rounded outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-200"
+          className="w-full mb-4 p-3 border border-gray-400 rounded outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-200 text-lg"
         />
         <input
           type="text"
           value={amount}
           onChange={handleAmountChange}
           placeholder="Сумма перевода"
-          className="w-full mb-3 p-2 border border-gray-400 rounded outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-200"
+          className="w-full mb-6 p-3 border border-gray-400 rounded outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-200 text-lg"
         />
 
         <button
           onClick={handleTransfer}
           disabled={loading}
-          className="w-full py-2 bg-blue-700 text-white rounded hover:bg-blue-800 disabled:opacity-50"
+          className="w-full py-3 bg-blue-700 text-white rounded hover:bg-blue-800 disabled:opacity-50 text-lg font-semibold"
         >
           {loading ? 'Перевод...' : 'Отправить'}
         </button>

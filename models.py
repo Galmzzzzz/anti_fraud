@@ -18,13 +18,11 @@ class UserDevicesModel(Base):
     __tablename__ = "user_devices"
 
     device_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    device: Mapped[str] = mapped_column(String(65), nullable=False)
+    device: Mapped[str] = mapped_column(String(255), nullable=False)
     user_ip: Mapped[str] = mapped_column(String(45), nullable=False)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     screen_width: Mapped[int] = mapped_column(BigInteger)
     screen_height: Mapped[int] = mapped_column(BigInteger)
-
-
 
 class TransactionsModel(Base):
     __tablename__ = "transactions"
@@ -47,3 +45,11 @@ class FraudReportsModel(Base):
     detected_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     reason: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="open")
+
+class UserRolesModel(Base):
+    __tablename__ = "user_roles"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())

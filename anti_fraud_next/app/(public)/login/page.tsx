@@ -34,28 +34,39 @@ export default function Login() {
 
     try {
       setLoading(true)
-      const device = navigator.userAgent.slice(0, 65)
+
+      // Формируем данные для отправки
+      const device = navigator.userAgent
+      const screen_width = window.screen.width
+      const screen_height = window.screen.height
+
+      console.log('Отправляемые данные на /login:', {
+        phone_number: Number(phone),
+        password,
+        device,
+        screen_width,
+        screen_height
+      })
 
       const response = await axios.post(
         "http://localhost:8000/login",
         {
           phone_number: Number(phone),
-          password: password,
-          device: device,
-          screen_width: window.screen.width,
-          screen_height: window.screen.height
+          password,
+          device,
+          screen_width,
+          screen_height
         },
-        {
-          withCredentials: true
-        }
+        { withCredentials: true }
       )
 
-      console.log('Успех:', response.data)
+      console.log('Ответ от /login:', response.data)
+
       // После успешного логина редирект на главную
-      window.location.href = '/'  
+      window.location.href = '/'
 
     } catch (err: any) {
-      console.error(err)
+      console.error('Ошибка при входе:', err)
       setError(
         err?.response?.data?.detail || 'Ошибка входа. Проверьте номер или пароль.'
       )
